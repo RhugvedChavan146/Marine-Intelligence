@@ -1,6 +1,6 @@
-import canonical from '../../mmr_canonical_envelope.json';
-import feasibility from '../../mmr_feasibility_assessment.json';
-import evidenceLog from '../../mmr_evidence_log.json';
+import canonical from '../../marine-intelligence-task-main/mmr_canonical_envelope.json';
+import feasibility from '../../marine-intelligence-task-main/mmr_feasibility_assessment.json';
+import evidenceLog from '../../marine-intelligence-task-main/mmr_evidence_log.json';
 
 /**
  * @typedef {'LOADING'|'READY'|'STALE'|'DEGRADED'|'ERROR'|'UNAVAILABLE'} DataState
