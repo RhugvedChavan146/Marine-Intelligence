@@ -1,8 +1,8 @@
-import canonical from '../../marine-intelligence-task-main backend/mmr_canonical_envelope.json';
-import feasibility from '../../marine-intelligence-task-main backend/mmr_feasibility_assessment.json';
-import ports from '../../marine-intelligence-task-main backend/ports.json';
-import logistics from '../../marine-intelligence-task-main backend/logistics.json';
-import waterways from '../../marine-intelligence-task-main backend/waterways.json';
+import canonical from '../../../Backend/marine-intelligence-task/mmr_canonical_envelope.json';
+import feasibility from '../../../Backend/marine-intelligence-task/mmr_feasibility_assessment.json';
+import ports from '../../../Backend/marine-intelligence-task/ports.json';
+import logistics from '../../../Backend/marine-intelligence-task/logistics.json';
+import waterways from '../../../Backend/marine-intelligence-task/waterways.json';
 
 const canonicalEntities = canonical.entities;
 const coordinateToLatLng = ([longitude, latitude]) => [latitude, longitude];

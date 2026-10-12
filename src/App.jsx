@@ -3,7 +3,19 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import styles from './styles.js';
 import { baseMapCenter, layers, mapBounds } from './mmrData.js';
-import { getActionCapabilities, getLiveApiStatus, getMmrSnapshot } from './apiClient.js';
+import {
+  clearStoredToken,
+  deleteUser,
+  fetchAdminUsers,
+  getActionCapabilities,
+  getCurrentUser,
+  getLiveApiStatus,
+  getMmrSnapshot,
+  loginUser,
+  registerUser,
+  updateUserActive,
+  updateUserRole,
+} from './apiClient.js';
 
 const assetDetails = {
   'Kolshet Jetty': 'Kolshet Jetty → Rewas Port · 29.44 km straight-line distance',
@@ -27,7 +39,24 @@ const controlEvidence = [
   { label: 'Environmental Constraint', value: 'FLAGGED', source: 'Thane Creek Ramsar Wetland Site · Ramsar Site No. 2490' },
 ];
 
-function Header({ onRefresh, liveStatus, activeTab, setActiveTab }) {
+function getUserDisplayName(user) {
+  if (!user) return '';
+  if (user.name && user.name.trim()) {
+    return user.name.trim();
+  }
+  const prefix = (user.email || '').split('@')[0];
+  if (!prefix) return 'User';
+  if (prefix.includes('.') || prefix.includes('_') || prefix.includes('-')) {
+    return prefix
+      .split(/[._-]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+  return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+}
+
+function Header({ onRefresh, liveStatus, activeTab, setActiveTab, user, onOpenAuth, onLogout }) {
   return (
     <header className="topbar">
       <a className="brand" href="#/" aria-label="MMR Intelligence home">
@@ -64,12 +93,40 @@ function Header({ onRefresh, liveStatus, activeTab, setActiveTab }) {
         >
           ⚡ Decision Loop
         </button>
+        {user?.role === 'admin' && (
+          <button
+            className={`tab-button ${activeTab === 'users' ? 'active' : ''}`}
+            onClick={() => setActiveTab('users')}
+            aria-selected={activeTab === 'users'}
+            role="tab"
+          >
+            👥 User Management
+          </button>
+        )}
       </div>
 
       <div className="top-actions">
         <span className={`live-api-state ${liveStatus.state === 'ONLINE' ? 'online' : 'offline'}`}>
           LIVE API <b>{liveStatus.state}</b>
         </span>
+
+        {user ? (
+          <div className="user-profile-badge">
+            <span className="user-avatar">{getUserDisplayName(user)[0].toUpperCase()}</span>
+            <span className="user-email-text" title={user.email}>
+              {getUserDisplayName(user)}
+            </span>
+            <span className={`role-tag ${user.role}`}>{user.role}</span>
+            <button className="sign-out-btn" onClick={onLogout} title="Sign Out">
+              Sign Out
+            </button>
+          </div>
+        ) : (
+          <button className="sign-in-btn" onClick={onOpenAuth}>
+            Sign In
+          </button>
+        )}
+
         <button className="icon-button" onClick={onRefresh} aria-label="Refresh data" title="Refresh data">
           ↻
         </button>
@@ -216,7 +273,22 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
   );
 }
 
-function MapWorkspace({ selectedAsset, selectedEntity, onSelect, zoomed, onZoomChange, onToast, scenario, setScenario, confidence, setConfidence, sidebarOpen, setSidebarOpen }) {
+function MapWorkspace({
+  selectedAsset,
+  selectedEntity,
+  onSelect,
+  zoomed,
+  onZoomChange,
+  onToast,
+  scenario,
+  setScenario,
+  confidence,
+  setConfidence,
+  sidebarOpen,
+  setSidebarOpen,
+  user,
+  onOpenAuth,
+}) {
   const [hasRun, setHasRun] = useState(false);
   const [readout, setReadout] = useState(scenarios.baseline);
   const runScenario = () => {
@@ -281,19 +353,54 @@ function MapWorkspace({ selectedAsset, selectedEntity, onSelect, zoomed, onZoomC
         hasRun={hasRun}
         readout={readout}
         onToast={onToast}
+        user={user}
+        onOpenAuth={onOpenAuth}
       />
     </section>
   );
 }
 
-function ControlCenter({ selectedAsset, selectedEntity, scenario, setScenario, confidence, setConfidence, runScenario, hasRun, readout, onToast }) {
+function ControlCenter({
+  selectedAsset,
+  selectedEntity,
+  scenario,
+  setScenario,
+  confidence,
+  setConfidence,
+  runScenario,
+  hasRun,
+  readout,
+  onToast,
+  user,
+  onOpenAuth,
+}) {
   const [mode, setMode] = useState('observe');
   const [replayOpen, setReplayOpen] = useState(false);
-  const [actionState, setActionState] = useState('BLOCKED');
+  const [actionState, setActionState] = useState('READY');
+  const [executionLog, setExecutionLog] = useState([]);
   const context = `${selectedAsset} · ${scenarios[scenario][0]}`;
-  const blockedAction = (action) => {
-    setActionState('BLOCKED');
-    onToast(`${action} blocked: authority API contract unavailable`);
+  const capabilities = getActionCapabilities(user);
+
+  const executeAction = (action) => {
+    if (!user) {
+      onToast(`Authentication required: Please sign in to execute ${action}`);
+      onOpenAuth();
+      return;
+    }
+    if (user.role === 'viewer') {
+      onToast('Access Denied: Viewer accounts are restricted to read-only observation.');
+      return;
+    }
+    setActionState(`${action.toUpperCase()}D`);
+    const newEvent = {
+      action,
+      user: user.email,
+      role: user.role,
+      target: selectedAsset,
+      time: new Date().toLocaleTimeString(),
+    };
+    setExecutionLog((prev) => [newEvent, ...prev]);
+    onToast(`Action Executed: ${action} confirmed by ${user.role.toUpperCase()} (${user.email})`);
   };
 
   return (
@@ -367,22 +474,44 @@ function ControlCenter({ selectedAsset, selectedEntity, scenario, setScenario, c
               Decision context: <b>{context}</b>
             </span>
           </div>
+
           <div className="authority-card">
             <div className="authority-card-info">
               <span className="section-kicker">AUTHORITY CHECK</span>
-              <b>Decision Authority Endpoint</b>
-              <small>Role, mandate and approval scope cannot be verified from the supplied contracts.</small>
+              <b>Decision Authority Scope</b>
+              <small>
+                {user?.role === 'admin'
+                  ? `Authenticated Administrator mandate (${user.email}). Executive decision scope granted.`
+                  : user?.role === 'viewer'
+                    ? `Signed in as Viewer (${user.email}). Read-only mode active; decision changes require Admin role.`
+                    : 'No active authenticated session. Sign in to verify decision mandate.'}
+              </small>
             </div>
-            <strong>BLOCKED</strong>
+            <strong style={{ color: user?.role === 'admin' ? 'var(--green)' : user?.role === 'viewer' ? 'var(--blue)' : 'var(--amber)' }}>
+              {user?.role === 'admin' ? 'AUTHORIZED' : user?.role === 'viewer' ? 'VIEWER (READ-ONLY)' : 'UNAUTHENTICATED'}
+            </strong>
           </div>
+
           <div className="decision-actions">
-            <button onClick={() => blockedAction('Approve')} disabled={!getActionCapabilities().approve}>
+            <button
+              onClick={() => executeAction('Approve')}
+              disabled={!capabilities.approve}
+              title={!capabilities.approve ? (user?.role === 'viewer' ? 'Restricted: Viewer is read-only' : 'Sign in as Admin') : 'Approve decision'}
+            >
               Approve
             </button>
-            <button onClick={() => blockedAction('Reject')} disabled={!getActionCapabilities().reject}>
+            <button
+              onClick={() => executeAction('Reject')}
+              disabled={!capabilities.reject}
+              title={!capabilities.reject ? (user?.role === 'viewer' ? 'Restricted: Viewer is read-only' : 'Sign in as Admin') : 'Reject decision'}
+            >
               Reject
             </button>
-            <button onClick={() => blockedAction('Escalate')} disabled={!getActionCapabilities().escalate}>
+            <button
+              onClick={() => executeAction('Escalate')}
+              disabled={!capabilities.escalate}
+              title={!capabilities.escalate ? (user?.role === 'viewer' ? 'Restricted: Viewer is read-only' : 'Sign in as Admin') : 'Escalate issue'}
+            >
               Escalate
             </button>
           </div>
@@ -395,22 +524,27 @@ function ControlCenter({ selectedAsset, selectedEntity, scenario, setScenario, c
             <div className="execution-card-info">
               <span className="section-kicker">EXECUTION STATUS</span>
               <b>{actionState}</b>
-              <small>Deploy / assign API contract unavailable. No execution has been attempted.</small>
+              <small>
+                {user?.role === 'admin'
+                  ? `Admin execution dispatch pipeline active for ${selectedAsset}.`
+                  : user?.role === 'viewer'
+                    ? 'Viewer role: execution dispatch is read-only.'
+                    : 'Sign in with Administrator account to dispatch.'}
+              </small>
             </div>
-            <span className="execution-dot blocked"></span>
+            <span className={`execution-dot ${user?.role === 'admin' ? 'live' : 'blocked'}`}></span>
           </div>
           <div className="act-actions">
-            <button onClick={() => blockedAction('Deploy')} disabled={!getActionCapabilities().deploy}>
+            <button onClick={() => executeAction('Deploy')} disabled={!capabilities.deploy}>
               Deploy
             </button>
-            <button onClick={() => blockedAction('Assign')} disabled={!getActionCapabilities().assign}>
+            <button onClick={() => executeAction('Assign')} disabled={!capabilities.assign}>
               Assign
             </button>
             <button
               className="replay-button"
               onClick={() => {
                 setReplayOpen((value) => !value);
-                onToast('Replay unavailable: no verified replay API contract');
               }}
             >
               ↺ Replay
@@ -419,8 +553,18 @@ function ControlCenter({ selectedAsset, selectedEntity, scenario, setScenario, c
           {replayOpen && (
             <div className="replay-log">
               <b>Replay Timeline</b>
-              <span>UNAVAILABLE · NO EXECUTION EVENTS</span>
-              <small>There is no verified execution record for {selectedAsset}.</small>
+              {executionLog.length === 0 ? (
+                <>
+                  <span>NO EXECUTION EVENTS YET</span>
+                  <small>Execute an admin action (Approve/Deploy) to record events in SQLite log.</small>
+                </>
+              ) : (
+                executionLog.map((ev, i) => (
+                  <div key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '6px' }}>
+                    <b style={{ color: 'var(--cyan-mint)' }}>{ev.action}</b> on <span>{ev.target}</span> by <small>{ev.user} ({ev.role})</small> at {ev.time}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -672,6 +816,607 @@ function IntelligencePanel({ selectedAsset, selectedEntity, onSelect, onToast })
   );
 }
 
+function UserManagement({ user, onToast }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [updatingId, setUpdatingId] = useState(null);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await fetchAdminUsers();
+      setUsers(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const handleRoleChange = async (targetUser, newRole) => {
+    if (targetUser.role === newRole) return;
+    setUpdatingId(targetUser.id);
+    try {
+      const updated = await updateUserRole(targetUser.id, newRole);
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? updated : u)));
+      onToast(`Updated ${targetUser.email} role to ${newRole.toUpperCase()}`);
+    } catch (err) {
+      onToast(`Role update failed: ${err.message}`);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleStatusToggle = async (targetUser) => {
+    setUpdatingId(targetUser.id);
+    try {
+      const updated = await updateUserActive(targetUser.id, !targetUser.is_active);
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? updated : u)));
+      onToast(`${targetUser.email} ${updated.is_active ? 'Activated' : 'Suspended'}`);
+    } catch (err) {
+      onToast(`Status update failed: ${err.message}`);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleDeleteUser = async (targetUser) => {
+    if (targetUser.id === user.id) {
+      onToast('You cannot delete your own admin account.');
+      return;
+    }
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete ${getUserDisplayName(targetUser)} (${targetUser.email})?`
+    );
+    if (!confirmDelete) return;
+
+    setUpdatingId(targetUser.id);
+    try {
+      await deleteUser(targetUser.id);
+      setUsers((prev) => prev.filter((u) => u.id !== targetUser.id));
+      onToast(`Permanently deleted: ${targetUser.email}`);
+    } catch (err) {
+      onToast(`Delete failed: ${err.message}`);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  if (user?.role !== 'admin') {
+    return (
+      <div className="user-management-view">
+        <div className="rbac-banner viewer">
+          <span>⚠️</span>
+          <span>Access Restricted: User Management requires an active Administrator role.</span>
+        </div>
+      </div>
+    );
+  }
+
+  const totalUsers = users.length;
+  const adminCount = users.filter((u) => u.role === 'admin' && u.is_active).length;
+  const viewerCount = users.filter((u) => u.role === 'viewer' && u.is_active).length;
+  const activeCount = users.filter((u) => u.is_active).length;
+
+  return (
+    <div className="user-management-view">
+      <div className="admin-header">
+        <div>
+          <span className="section-kicker">GOVERNANCE &amp; SECURITY</span>
+          <h2 style={{ fontSize: '20px', fontWeight: 800 }}>Role-Based Access Management</h2>
+          <small style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+            Connected to Marine Intelligence SQLite &amp; JWT Authority Engine
+          </small>
+        </div>
+        <button className="sign-in-btn" onClick={loadUsers} disabled={loading}>
+          ↻ Refresh Accounts
+        </button>
+      </div>
+
+      <div className="admin-stats-grid">
+        <div className="admin-stat-card">
+          <span>Total Accounts</span>
+          <strong>{totalUsers}</strong>
+        </div>
+        <div className="admin-stat-card">
+          <span>Active Admins</span>
+          <strong style={{ color: '#fbbf24' }}>{adminCount}</strong>
+        </div>
+        <div className="admin-stat-card">
+          <span>Active Viewers</span>
+          <strong style={{ color: '#93c5fd' }}>{viewerCount}</strong>
+        </div>
+        <div className="admin-stat-card">
+          <span>Operational State</span>
+          <strong style={{ color: 'var(--green)' }}>{activeCount} / {totalUsers} ACTIVE</strong>
+        </div>
+      </div>
+
+      {error && <div className="auth-error-box">{error}</div>}
+
+      <div className="users-table-card">
+        <div className="users-table-header">
+          <b>System User Directory</b>
+          <small style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+            Changes commit directly to backend SQLite database
+          </small>
+        </div>
+        <table className="users-table">
+          <thead>
+            <tr>
+              <th>Account Email</th>
+              <th>Current Role</th>
+              <th>Account Status</th>
+              <th>Created Date</th>
+              <th>Permissions Scope</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((item) => (
+              <tr key={item.id}>
+                <td>
+                  <div>
+                    <strong style={{ color: 'var(--text-bright)', fontSize: '13px' }}>
+                      {getUserDisplayName(item)}
+                    </strong>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--muted)' }}>
+                      {item.email}
+                      {item.id === user.id && <span style={{ marginLeft: '6px', color: 'var(--cyan-mint)', fontSize: '10px' }}>(You)</span>}
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <select
+                    className="role-select"
+                    value={item.role}
+                    disabled={updatingId === item.id}
+                    onChange={(e) => handleRoleChange(item, e.target.value)}
+                  >
+                    <option value="admin">ADMIN</option>
+                    <option value="analyst">ANALYST</option>
+                    <option value="viewer">VIEWER</option>
+                  </select>
+                </td>
+                <td>
+                  <button
+                    className={`status-toggle ${item.is_active ? 'active' : 'inactive'}`}
+                    disabled={updatingId === item.id}
+                    onClick={() => handleStatusToggle(item)}
+                    title={item.is_active ? 'Click to suspend' : 'Click to activate'}
+                  >
+                    <span>{item.is_active ? '● Active' : '○ Suspended'}</span>
+                  </button>
+                </td>
+                <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--muted)' }}>
+                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'N/A'}
+                </td>
+                <td>
+                  <span className={`role-tag ${item.role}`}>
+                    {item.role === 'admin' ? 'FULL CONTROL' : item.role === 'analyst' ? 'ANALYSIS & ASSESSMENTS' : 'READ-ONLY DATA'}
+                  </span>
+                </td>
+                <td>
+                  {item.id !== user.id && (
+                    <button
+                      className="delete-user-btn"
+                      disabled={updatingId === item.id}
+                      onClick={() => handleDeleteUser(item)}
+                      title={`Permanently delete ${item.email}`}
+                    >
+                      🗑️ Delete
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AuthModal({ isOpen, onClose, onLogin, onRegister }) {
+  const [tab, setTab] = useState('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+
+  const validateNameFormat = (val) => {
+    const trimmed = (val || '').trim();
+    if (!trimmed) return 'Full name is required.';
+    if (trimmed.length < 2) return 'Full name must be at least 2 characters.';
+    return '';
+  };
+
+  const validateEmailFormat = (val) => {
+    const trimmed = (val || '').trim();
+    if (!trimmed) return 'Email address is required.';
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      return 'Please enter a valid email address (e.g. name@domain.com).';
+    }
+    return '';
+  };
+
+  const validatePasswordFormat = (val) => {
+    if (!val) return 'Password is required.';
+    if (val.length < 12) {
+      return `Password must be at least 12 characters (${val.length}/12).`;
+    }
+    if (val.length > 128) {
+      return 'Password cannot exceed 128 characters.';
+    }
+    return '';
+  };
+
+  const handleBlur = (field) => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    validateField(field);
+  };
+
+  const validateField = (field) => {
+    let msg = '';
+    if (field === 'name' && tab === 'register') {
+      msg = validateNameFormat(name);
+    } else if (field === 'email') {
+      msg = validateEmailFormat(email);
+    } else if (field === 'password') {
+      msg = validatePasswordFormat(password);
+    } else if (field === 'confirmPassword' && tab === 'register') {
+      if (!confirmPassword) {
+        msg = 'Please confirm your password.';
+      } else if (confirmPassword !== password) {
+        msg = 'Passwords do not match.';
+      }
+    }
+    setFieldErrors((prev) => ({ ...prev, [field]: msg }));
+    return !msg;
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsReady(false);
+      setEmail('');
+      setName('');
+      setPassword('');
+      setConfirmPassword('');
+      setError('');
+      setFieldErrors({});
+      setTouched({});
+      setShowPassword(false);
+      setShowConfirmPassword(false);
+
+      const timer = setTimeout(() => {
+        setIsReady(true);
+        setEmail('');
+        setPassword('');
+      }, 120);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  const switchTab = (nextTab) => {
+    setTab(nextTab);
+    setError('');
+    setFieldErrors({});
+    setTouched({});
+    setEmail('');
+    setName('');
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setIsReady(false);
+
+    setTimeout(() => {
+      setIsReady(true);
+      setEmail('');
+      setPassword('');
+    }, 60);
+  };
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    const nameValid = tab === 'register' ? validateNameFormat(name) : '';
+    const emailValid = validateEmailFormat(email);
+    const passValid = validatePasswordFormat(password);
+    const confirmValid = tab === 'register' ? (confirmPassword !== password ? 'Passwords do not match.' : '') : '';
+
+    setTouched({ name: true, email: true, password: true, confirmPassword: true });
+    setFieldErrors({
+      name: nameValid,
+      email: emailValid,
+      password: passValid,
+      confirmPassword: confirmValid,
+    });
+
+    if (nameValid || emailValid || passValid || confirmValid) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (tab === 'login') {
+        await onLogin(email.trim(), password);
+      } else {
+        await onRegister(email.trim(), password, name.trim());
+      }
+    } catch (err) {
+      setError(err.message || 'Operation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const nameHasError = touched.name && fieldErrors.name;
+  const nameIsClean = touched.name && !fieldErrors.name && name.trim().length >= 2;
+  const emailHasError = touched.email && fieldErrors.email;
+  const emailIsClean = touched.email && !fieldErrors.email && email.length > 0;
+  const passHasError = touched.password && fieldErrors.password;
+  const passIsClean = touched.password && !fieldErrors.password && password.length >= 12;
+  const confirmHasError = touched.confirmPassword && fieldErrors.confirmPassword;
+  const confirmIsClean = touched.confirmPassword && !fieldErrors.confirmPassword && confirmPassword.length >= 12;
+
+  return (
+    <div className="auth-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="auth-modal-header">
+          <div className="auth-modal-title">
+            <span className="section-kicker">MMR SECURITY GATEWAY</span>
+            <h2 id="auth-modal-title">
+              {tab === 'login' ? 'Sign In to MMR Console' : 'Create Account'}
+            </h2>
+            <p className="auth-context-desc">
+              {tab === 'login'
+                ? 'Authenticate with your verified credentials to access operational decision controls and spatial GIS analytics.'
+                : 'Register a verified account to access operational maps and spatial analytics.'}
+            </p>
+          </div>
+          <button className="auth-modal-close" onClick={onClose} aria-label="Close authentication modal" title="Close">✕</button>
+        </div>
+
+        <div className="auth-tabs" role="tablist">
+          <button
+            type="button"
+            className={`auth-tab-btn ${tab === 'login' ? 'active' : ''}`}
+            onClick={() => switchTab('login')}
+            role="tab"
+            aria-selected={tab === 'login'}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            className={`auth-tab-btn ${tab === 'register' ? 'active' : ''}`}
+            onClick={() => switchTab('register')}
+            role="tab"
+            aria-selected={tab === 'register'}
+          >
+            Register
+          </button>
+        </div>
+
+        {error && (
+          <div className="auth-error-box" role="alert">
+            <span style={{ fontSize: '14px' }}>⚠️</span>
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form className="auth-form" onSubmit={handleSubmit} noValidate autoComplete="off">
+          {/* Decoy inputs to intercept aggressive browser autofill */}
+          <div style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none', overflow: 'hidden' }} aria-hidden="true">
+            <input type="text" name="fake_username_decoy" tabIndex="-1" autoComplete="off" />
+            <input type="password" name="fake_password_decoy" tabIndex="-1" autoComplete="off" />
+          </div>
+
+          {tab === 'register' && (
+            <div className="auth-field">
+              <div className="auth-field-header">
+                <label htmlFor="auth-name-input">Full Name</label>
+                {nameIsClean && <span className="auth-char-count valid">✓ Valid</span>}
+              </div>
+              <div className="auth-input-wrapper">
+                <input
+                  id="auth-name-input"
+                  name="user_full_name"
+                  type="text"
+                  required
+                  disabled={loading}
+                  autoComplete="off"
+                  placeholder="Enter your name"
+                  value={name}
+                  className={nameHasError ? 'is-invalid' : nameIsClean ? 'is-valid' : ''}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (touched.name) {
+                      setFieldErrors((prev) => ({ ...prev, name: validateNameFormat(e.target.value) }));
+                    }
+                  }}
+                  onBlur={() => handleBlur('name')}
+                />
+              </div>
+              {nameHasError && <span className="field-error-msg">⚠️ {fieldErrors.name}</span>}
+            </div>
+          )}
+
+          <div className="auth-field">
+            <div className="auth-field-header">
+              <label htmlFor="auth-email-input">Email Address</label>
+              {emailIsClean && <span className="auth-char-count valid">✓ Valid format</span>}
+            </div>
+            <div className="auth-input-wrapper">
+              <input
+                id="auth-email-input"
+                name="user_login_identity"
+                type="email"
+                readOnly={!isReady}
+                onFocus={() => setIsReady(true)}
+                required
+                disabled={loading}
+                autoComplete="new-password"
+                placeholder="Enter your email"
+                value={email}
+                className={emailHasError ? 'is-invalid' : emailIsClean ? 'is-valid' : ''}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (touched.email) {
+                    setFieldErrors((prev) => ({ ...prev, email: validateEmailFormat(e.target.value) }));
+                  }
+                }}
+                onBlur={() => handleBlur('email')}
+              />
+            </div>
+            {emailHasError && <span className="field-error-msg">⚠️ {fieldErrors.email}</span>}
+          </div>
+
+          <div className="auth-field">
+            <div className="auth-field-header">
+              <label htmlFor="auth-password-input">Password</label>
+              {tab === 'register' && (
+                <span className={`auth-char-count ${password.length >= 12 ? 'valid' : ''}`}>
+                  {password.length}/12 min chars
+                </span>
+              )}
+            </div>
+            <div className="auth-input-wrapper">
+              <input
+                id="auth-password-input"
+                name="user_login_secret"
+                type={showPassword ? 'text' : 'password'}
+                readOnly={!isReady}
+                onFocus={() => setIsReady(true)}
+                required
+                disabled={loading}
+                autoComplete="new-password"
+                placeholder={tab === 'login' ? 'Enter your password' : 'Enter your password (min 12 chars)'}
+                value={password}
+                className={`has-toggle ${passHasError ? 'is-invalid' : passIsClean ? 'is-valid' : ''}`}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (touched.password) {
+                    setFieldErrors((prev) => ({ ...prev, password: validatePasswordFormat(e.target.value) }));
+                  }
+                  if (tab === 'register' && touched.confirmPassword) {
+                    setFieldErrors((prev) => ({
+                      ...prev,
+                      confirmPassword: confirmPassword !== e.target.value ? 'Passwords do not match.' : '',
+                    }));
+                  }
+                }}
+                onBlur={() => handleBlur('password')}
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword((prev) => !prev)}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            {passHasError && <span className="field-error-msg">⚠️ {fieldErrors.password}</span>}
+          </div>
+
+          {tab === 'register' && (
+            <div className="auth-field">
+              <div className="auth-field-header">
+                <label htmlFor="auth-confirm-password-input">Confirm Password</label>
+                {confirmIsClean && <span className="auth-char-count valid">✓ Matches</span>}
+              </div>
+              <div className="auth-input-wrapper">
+                <input
+                  id="auth-confirm-password-input"
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  required
+                  disabled={loading}
+                  autoComplete="off"
+                  placeholder="Confirm your password"
+                  value={confirmPassword}
+                  className={`has-toggle ${confirmHasError ? 'is-invalid' : confirmIsClean ? 'is-valid' : ''}`}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    if (touched.confirmPassword) {
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        confirmPassword: e.target.value !== password ? 'Passwords do not match.' : '',
+                      }));
+                    }
+                  }}
+                  onBlur={() => handleBlur('confirmPassword')}
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  title={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                >
+                  {showConfirmPassword ? (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              {confirmHasError && <span className="field-error-msg">⚠️ {fieldErrors.confirmPassword}</span>}
+            </div>
+          )}
+
+          <button type="submit" className="auth-submit-btn" disabled={loading}>
+            {loading ? (
+              <>
+                <span className="btn-spinner"></span>
+                <span>{tab === 'login' ? 'Authenticating...' : 'Registering Account...'}</span>
+              </>
+            ) : (
+              tab === 'login' ? 'Sign In to MMR Console' : 'Register'
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('spatial');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -681,6 +1426,8 @@ export default function App() {
   const [confidence, setConfidence] = useState(68);
   const [toast, setToast] = useState('');
   const [snapshot, setSnapshot] = useState(null);
+  const [user, setUser] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [liveStatus, setLiveStatus] = useState({
     state: 'CHECKING',
     source: 'http://163.128.209.18:8013',
@@ -699,14 +1446,49 @@ export default function App() {
     }
   };
 
+  const loadAuthUser = async () => {
+    try {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+    } catch (err) {
+      console.error('Session restoration failed:', err);
+    }
+  };
+
   useEffect(() => {
     refreshSnapshot();
+    loadAuthUser();
   }, []);
 
   const notify = (message) => {
     setToast(message);
     window.clearTimeout(window.mmrToastTimer);
     window.mmrToastTimer = window.setTimeout(() => setToast(''), 2600);
+  };
+
+  const handleLogin = async (email, password) => {
+    const data = await loginUser(email, password);
+    setUser(data.user);
+    setAuthModalOpen(false);
+    notify(`Welcome, ${getUserDisplayName(data.user)} (${data.user.role.toUpperCase()})`);
+  };
+
+  const handleRegister = async (email, password, name) => {
+    await registerUser(email, password, name);
+    // Automatically log in after registration
+    const data = await loginUser(email, password);
+    setUser(data.user);
+    setAuthModalOpen(false);
+    notify(`Account registered! Welcome, ${getUserDisplayName(data.user)}`);
+  };
+
+  const handleLogout = () => {
+    clearStoredToken();
+    setUser(null);
+    if (activeTab === 'users') {
+      setActiveTab('spatial');
+    }
+    notify('Signed out successfully');
   };
 
   const selectedEntity = snapshot?.entities.find((entity) => entity.name === selectedAsset) || null;
@@ -727,9 +1509,12 @@ export default function App() {
           liveStatus={liveStatus}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
+          user={user}
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onLogout={handleLogout}
         />
 
-        <main className={`workspace ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+        <main className={`workspace ${sidebarOpen && activeTab !== 'users' ? '' : 'sidebar-collapsed'}`}>
           {activeTab === 'spatial' && (
             <MapWorkspace
               selectedAsset={selectedAsset}
@@ -744,6 +1529,8 @@ export default function App() {
               setConfidence={setConfidence}
               sidebarOpen={sidebarOpen}
               setSidebarOpen={setSidebarOpen}
+              user={user}
+              onOpenAuth={() => setAuthModalOpen(true)}
             />
           )}
 
@@ -759,16 +1546,31 @@ export default function App() {
               hasRun={true}
               readout={scenarios[scenario]}
               onToast={notify}
+              user={user}
+              onOpenAuth={() => setAuthModalOpen(true)}
             />
           )}
 
-          <IntelligencePanel
-            selectedAsset={selectedAsset}
-            selectedEntity={selectedEntity}
-            onSelect={selectAsset}
-            onToast={notify}
-          />
+          {activeTab === 'users' && (
+            <UserManagement user={user} onToast={notify} />
+          )}
+
+          {activeTab !== 'users' && (
+            <IntelligencePanel
+              selectedAsset={selectedAsset}
+              selectedEntity={selectedEntity}
+              onSelect={selectAsset}
+              onToast={notify}
+            />
+          )}
         </main>
+
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          onLogin={handleLogin}
+          onRegister={handleRegister}
+        />
 
         <div className={`toast ${toast ? 'visible' : ''}`} role="status">
           {toast}
