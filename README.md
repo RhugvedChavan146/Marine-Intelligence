@@ -1,4 +1,4 @@
-# 🌊 MMR Marine Intelligence Console
+# 🌊 MMR Marine Intelligence
 
 > **Spatial GIS & Decision Support System for Mumbai Metropolitan Region (MMR) Marine Infrastructure and Inland Waterway NW-53 Corridor Analysis.**
 
@@ -61,7 +61,7 @@ The **MMR Marine Intelligence Console** is a web-based spatial dashboard designe
 3. Configure Environment Variables (Optional):
    Create or edit `.env` in the `MMR/` folder:
    ```env
-   VITE_MMR_API_BASE_URL=http://163.128.209.18:8013
+   VITE_MMR_API_BASE_URL=""
    ```
 
 4. Start Development Server:
@@ -105,7 +105,7 @@ MMR/
 
 ## 🔌 Live API Endpoints
 
-When connected to the VANA MasterDB Observation API (`http://163.128.209.18:8013`), the console verifies:
+When connected to the VANA MasterDB Observation API , the console verifies:
 
 - **`GET /health`** - System readiness check
 - **`GET /observations/{observation_id}`** - Real-time observation payload retrieval
