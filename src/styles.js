@@ -399,6 +399,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   text-align: left;
   font-size: 11px;
   font-weight: 500;
+  cursor: pointer;
   transition: all 0.15s ease;
 }
 
@@ -430,8 +431,55 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   color: var(--cyan-mint);
 }
 
-.layer-toggle.unavailable { opacity: 0.55; }
+.layer-toggle.unavailable { opacity: 0.55; cursor: not-allowed; }
 .layer-toggle.unavailable b { color: var(--muted); }
+
+/* Leaflet Popups and Tooltips Dark-Glass Theme */
+.leaflet-popup-content-wrapper {
+  background: rgba(7, 18, 28, 0.94) !important;
+  backdrop-filter: blur(12px) !important;
+  color: var(--ink) !important;
+  border: 1px solid rgba(66, 224, 211, 0.4) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 15px rgba(66, 224, 211, 0.15) !important;
+  font-family: var(--font-sans) !important;
+}
+
+.leaflet-popup-tip {
+  background: rgba(7, 18, 28, 0.94) !important;
+  border: 1px solid rgba(66, 224, 211, 0.4) !important;
+}
+
+.leaflet-popup-content strong {
+  color: var(--cyan-mint) !important;
+  font-size: 13px !important;
+  display: block !important;
+  margin-bottom: 4px !important;
+  letter-spacing: 0.02em !important;
+}
+
+.leaflet-popup-content span {
+  color: var(--muted) !important;
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-tooltip {
+  background: rgba(7, 18, 28, 0.92) !important;
+  border: 1px solid rgba(66, 224, 211, 0.35) !important;
+  color: var(--ink) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 6px !important;
+  padding: 4px 8px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-tooltip-top:before { border-top-color: rgba(7, 18, 28, 0.92) !important; }
+.leaflet-tooltip-bottom:before { border-bottom-color: rgba(7, 18, 28, 0.92) !important; }
+.leaflet-tooltip-left:before { border-left-color: rgba(7, 18, 28, 0.92) !important; }
+.leaflet-tooltip-right:before { border-right-color: rgba(7, 18, 28, 0.92) !important; }
 
 .map-status {
   position: absolute;

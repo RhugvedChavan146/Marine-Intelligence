@@ -146,14 +146,25 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
   );
 
   useEffect(() => {
-    const map = L.map(mapRef.current, { zoomControl: false, attributionControl: true }).setView(baseMapCenter, 10);
+    const map = L.map(mapRef.current, {
+      zoomControl: false,
+      attributionControl: true,
+      maxZoom: 21,
+    }).setView(baseMapCenter, 10);
+
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: 19,
+
+    // Freely available high-resolution Satellite Hybrid basemap
+    L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+      subdomains: ['0', '1', '2', '3'],
+      attribution: '&copy; Google Maps',
+      maxNativeZoom: 20,
+      maxZoom: 21,
     }).addTo(map);
+
     map.fitBounds(mapBounds, { padding: [20, 20] });
     mapInstance.current = map;
+
     return () => {
       map.remove();
       mapInstance.current = null;
@@ -167,12 +178,13 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
     layerGroups.current = {};
 
     const addPoint = (group, entity, name, type, lat, lon, details) => {
+      const color = layers[type]?.color || '#42e0d3';
       const marker = L.circleMarker([lat, lon], {
-        radius: selectedAsset === name ? 10 : 6,
-        color: layers[type]?.color || '#42e0d3',
-        weight: selectedAsset === name ? 3 : 2,
-        fillColor: layers[type]?.color || '#42e0d3',
-        fillOpacity: 0.9,
+        radius: selectedAsset === name ? 11 : 7,
+        color: '#ffffff',
+        weight: selectedAsset === name ? 3 : 1.5,
+        fillColor: color,
+        fillOpacity: 0.95,
       });
       marker.bindPopup(`<strong>${name}</strong><br><span>${details}</span>`);
       marker.on('click', () => onSelect(name));
@@ -249,6 +261,7 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
   return (
     <div className="real-map-shell">
       <div ref={mapRef} className={`leaflet-map ${zoomed ? 'zoomed' : ''}`} aria-label="Interactive Marine Spatial Map"></div>
+
       <div className="map-layer-control">
         <div className="layer-control-title">
           <span>MAP LAYERS</span> <span>WGS84</span>
@@ -256,6 +269,7 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
         {layerOrder.map((key) => (
           <button
             key={key}
+            type="button"
             className={`layer-toggle ${visibleLayers[key] ? 'active' : ''} ${layers[key].unavailable ? 'unavailable' : ''}`}
             onClick={() => {
               if (layers[key].unavailable) return;
@@ -268,7 +282,10 @@ function MarineSpatialMap({ selectedAsset, onSelect, zoomed, sidebarOpen }) {
           </button>
         ))}
       </div>
-      <div className="map-provider-note">OpenStreetMap basemap · verified spatial layer</div>
+
+      <div className="map-provider-note">
+        🛰️ Satellite View basemap · verified spatial layer
+      </div>
     </div>
   );
 }
@@ -332,7 +349,12 @@ function MapWorkspace({
       </div>
 
       <div className="map-canvas-wrapper">
-        <MarineSpatialMap selectedAsset={selectedAsset} onSelect={onSelect} zoomed={zoomed} sidebarOpen={sidebarOpen} />
+        <MarineSpatialMap
+          selectedAsset={selectedAsset}
+          onSelect={onSelect}
+          zoomed={zoomed}
+          sidebarOpen={sidebarOpen}
+        />
         <div className="map-status">
           <span className="status-icon">✓</span>
           <div>
